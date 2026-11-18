@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Landlog – Rate your landlord</title>
+<meta name="description" content="Honest tenant reviews of landlords and property managers. Look one up before you sign, rate yours when you move out.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar" id="bar">
+  <div class="bar-in">
+    <a class="word" href="#/">Landlog</a>
+    <div class="bar-search omni-wrap"><form id="barSearch" role="search" autocomplete="off">
+      <label class="sr" for="barQ">Search landlords</label>
+      <input id="barQ" type="search" placeholder="Address or landlord"></form></div>
+    <nav class="bar-nav">
+      <a class="browse" href="#/search?q=">Search</a><a class="pill pill-white" href="#/rate">Rate a landlord</a>
+    </nav>
+  </div>
+</header>
+<main id="main"></main>
+<footer class="foot">
+  <div class="foot-in">
+    <div class="foot-word" aria-hidden="true">Landlog</div>
+    <div class="foot-cols">
+      <p>Landlog is a place for tenants to tell the truth about the people they pay rent to. Reviews describe personal experience and opinion.</p>
+      <ul>
+        <li><a href="#/search?q=">Browse landlords</a></li>
+        <li><a href="#/rate">Rate a landlord</a></li>
+        <li><a href="#/guidelines">Review guidelines</a></li>
+      </ul>
+      <p class="small">Landlords and reviews shown here are sample data for demonstration. Anything you submit stays in your own browser.</p>
+    </div>
+  </div>
+</footer>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
