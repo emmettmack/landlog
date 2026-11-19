@@ -13,9 +13,36 @@ const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''
 
 /* ---------- data ---------- */
 (function(){ const extra = store.get('landlog.props', {}); window.LANDLORDS.forEach(l => (extra[l.id]||[]).forEach(p => { if(!l.properties.includes(p)) l.properties.push(p); })); })();
-function allLandlords(){ return window.LANDLORDS.concat(store.get('landlog.ll', [])); }
+/* shared database (Supabase REST). Off unless config.js has keys; then the site runs from browser storage only. */
+const CFG = window.LANDLOG_CONFIG || {};
+const remote = { on: !!(CFG.url && CFG.anonKey), ll: [], rev: [] };
+async function sb(path, opts = {}){
+  const r = await fetch(CFG.url.replace(/\/$/, '') + '/rest/v1/' + path, Object.assign({}, opts, {
+    headers: Object.assign({apikey: CFG.anonKey, Authorization: 'Bearer ' + CFG.anonKey, 'Content-Type': 'application/json'}, opts.headers || {})
+  }));
+  if(!r.ok) throw new Error(await r.text());
+  const t = await r.text(); return t ? JSON.parse(t) : null;
+}
+const sbInsert = (table, row, extra = '') => sb(table + extra, {method:'POST', body: JSON.stringify(row), headers: {Prefer: 'return=minimal' + (extra ? ',resolution=ignore-duplicates' : '')}});
+async function loadRemote(){
+  const [lls, props, revs] = await Promise.all([
+    sb('landlords?select=*&order=created_at'),
+    sb('ll_props?select=ll,prop'),
+    sb('reviews?select=*&hidden=eq.false&order=created_at.desc&limit=5000')
+  ]);
+  const byId = new Map(lls.map(l => [l.id, {id:l.id, name:l.name, type:l.type, city:l.city, state:l.state, properties:[]}]));
+  const seed = new Map(window.LANDLORDS.map(l => [l.id, l]));
+  props.forEach(p => { const l = byId.get(p.ll) || seed.get(p.ll); if(l && !l.properties.includes(p.prop)) l.properties.push(p.prop); });
+  const mineIds = new Set(store.get('landlog.mineIds', []));
+  remote.ll = [...byId.values()];
+  remote.rev = revs.map(r => ({id:r.id, ll:r.ll, prop:r.prop, year:r.year || new Date(r.created_at).getFullYear(), overall:r.overall, resp:r.resp, repairs:r.repairs,
+    deposit:r.deposit, again:r.again, tags:r.tags || [], text:r.text || '', reply:r.reply, date:r.created_at, mine:mineIds.has(r.id), remote:true}));
+  return lls.length + revs.length;
+}
+function allLandlords(){ return window.LANDLORDS.concat(remote.on ? remote.ll : store.get('landlog.ll', [])); }
 function allReviews(){
   const seed = window.REVIEWS.map((r,i) => ({id:'s'+i, ll:r[0], prop:r[1], year:r[2], overall:r[3], resp:r[4], repairs:r[5], deposit:r[6], again:r[7], tags:r[8], text:r[9], reply:r[10], date:r[2]+'-'+String(((i*5)%12)+1).padStart(2,'0'), mine:false}));
+  if(remote.on) return seed.concat(remote.rev);
   const mine = store.get('landlog.rev', []).map(r => Object.assign({mine:true}, r));
   return seed.concat(mine);
 }
@@ -513,7 +540,10 @@ function bindLandlord(id){
     const v = store.get('landlog.votes', {}); if(v[b.dataset.vote]) delete v[b.dataset.vote]; else v[b.dataset.vote] = 1; store.set('landlog.votes', v); rerender();
   }));
   $main.querySelectorAll('[data-flag]').forEach(b => b.addEventListener('click', () => {
-    const f = store.get('landlog.flags', {}); f[b.dataset.flag] = 1; store.set('landlog.flags', f); rerender();
+    const f = store.get('landlog.flags', {}); if(f[b.dataset.flag]) return;
+    f[b.dataset.flag] = 1; store.set('landlog.flags', f);
+    if(remote.on) sb('rpc/flag_review', {method:'POST', body: JSON.stringify({rid: b.dataset.flag})}).catch(() => {});
+    rerender();
   }));
   const share = document.getElementById('shareBtn');
   share.addEventListener('click', async () => {
@@ -545,7 +575,7 @@ function bindRate(){
   form.querySelectorAll('input[name=tag]').forEach(c => c.addEventListener('change', () => {
     if(form.querySelectorAll('input[name=tag]:checked').length > 3) c.checked = false;
   }));
-  form.addEventListener('submit', e => {
+  form.addEventListener('submit', async e => {
     e.preventDefault();
     const fd = new FormData(form);
     const fail = m => { err.textContent = m; err.scrollIntoView({block:'center', behavior:'smooth'}); };
@@ -556,21 +586,39 @@ function bindRate(){
     for(const k of ['overall','resp','repairs']) if(!fd.get(k)) return fail('Please give all three ratings.');
     if(fd.get('again') === null) return fail('Tell us whether you would rent from them again.');
     const body = (fd.get('text')||'').trim();
+    const btn = form.querySelector('[type=submit]'); if(btn) btn.disabled = true;
+    const done = m => { if(btn) btn.disabled = false; return fail(m); };
+    let newLL = null;
     if(llId === '__new'){
       const name = document.getElementById('newName').value.trim(), cityRaw = document.getElementById('newCity').value.trim();
-      if(!name || !cityRaw) return fail('Add the landlord’s name and city.');
-      const [city, state2] = cityRaw.split(',').map(s => s.trim());
-      llId = 'u-' + slug(name) + '-' + Date.now().toString(36);
-      const mine = store.get('landlog.ll', []);
-      mine.push({id:llId, name, type:'Added by a tenant', city:city||cityRaw, state:state2||'', properties:[]});
-      store.set('landlog.ll', mine);
+      if(!name || !cityRaw) return done('Add the landlord’s name and city.');
+      const same = allLandlords().find(l => norm(l.name).join(' ') === norm(name).join(' '));
+      if(same) llId = same.id;
+      else {
+        const [city, state2] = cityRaw.split(',').map(s => s.trim());
+        llId = 'u-' + slug(name).slice(0, 60) + '-' + Date.now().toString(36);
+        newLL = {id:llId, name, type:'Added by a tenant', city:city||cityRaw, state:state2||'', properties:[]};
+      }
     }
-    const rev = {id:'u'+Date.now().toString(36), ll:llId, prop:addr, year:fd.get('year'), overall:+fd.get('overall'), resp:+fd.get('resp'), repairs:+fd.get('repairs'), deposit:fd.get('deposit'), again:fd.get('again')==='1', tags:fd.getAll('tag'), text:body, reply:null, date:new Date().toISOString()};
-    const mine = store.get('landlog.rev', []); mine.push(rev); store.set('landlog.rev', mine);
-    const ll = getLL(llId);
-    if(ll && !ll.properties.includes(addr)){
-      if(llId.startsWith('u-')){ const arr = store.get('landlog.ll', []); const t = arr.find(x=>x.id===llId); if(t){ t.properties.push(addr); store.set('landlog.ll', arr); } }
-      else { const extra = store.get('landlog.props', {}); (extra[llId] = extra[llId]||[]).push(addr); store.set('landlog.props', extra); ll.properties.push(addr); }
+    const rev = {id:'u'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), ll:llId, prop:addr, year:fd.get('year'), overall:+fd.get('overall'), resp:+fd.get('resp'), repairs:+fd.get('repairs'), deposit:fd.get('deposit'), again:fd.get('again')==='1', tags:fd.getAll('tag'), text:body, reply:null, date:new Date().toISOString()};
+    if(remote.on){
+      try {
+        if(newLL) await sbInsert('landlords', {id:newLL.id, name:newLL.name, type:newLL.type, city:newLL.city, state:newLL.state});
+        await sbInsert('ll_props', {ll:llId, prop:addr}, '?on_conflict=ll,prop');
+        await sbInsert('reviews', {id:rev.id, ll:llId, prop:addr, year:String(rev.year||'').slice(0,4), overall:rev.overall, resp:rev.resp, repairs:rev.repairs, deposit:rev.deposit, again:rev.again, tags:rev.tags, text:body});
+      } catch(x){ return done('Could not save your review. Check your connection and try again.'); }
+      store.set('landlog.mineIds', store.get('landlog.mineIds', []).concat(rev.id));
+      if(newLL){ newLL.properties.push(addr); remote.ll.push(newLL); }
+      else { const l = getLL(llId); if(l && !l.properties.includes(addr)) l.properties.push(addr); }
+      remote.rev.unshift(Object.assign({}, rev, {mine:true, remote:true}));
+    } else {
+      if(newLL){ const arr = store.get('landlog.ll', []); arr.push(newLL); store.set('landlog.ll', arr); }
+      const mine = store.get('landlog.rev', []); mine.push(rev); store.set('landlog.rev', mine);
+      const ll = getLL(llId);
+      if(ll && !ll.properties.includes(addr)){
+        if(llId.startsWith('u-')){ const arr = store.get('landlog.ll', []); const t = arr.find(x=>x.id===llId); if(t){ t.properties.push(addr); store.set('landlog.ll', arr); } }
+        else { const extra = store.get('landlog.props', {}); (extra[llId] = extra[llId]||[]).push(addr); store.set('landlog.props', extra); ll.properties.push(addr); }
+      }
     }
     location.hash = '#/landlord/' + llId + '?p=' + enc(addr);
   });
@@ -587,4 +635,5 @@ document.addEventListener('keydown', e => {
 });
 window.addEventListener('hashchange', route);
 route();
+if(remote.on) loadRemote().then(n => { if(n && !location.hash.startsWith('#/rate')) route(); }).catch(() => {});
 })();
