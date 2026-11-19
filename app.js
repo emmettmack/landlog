@@ -498,7 +498,6 @@ function bindRate(){
     for(const k of ['overall','resp','repairs']) if(!fd.get(k)) return fail('Please give all three ratings.');
     if(fd.get('again') === null) return fail('Tell us whether you would rent from them again.');
     const body = (fd.get('text')||'').trim();
-    if(body.length < 20) return fail('Write at least a couple of sentences (20 characters).');
     if(llId === '__new'){
       const name = document.getElementById('newName').value.trim(), cityRaw = document.getElementById('newCity').value.trim();
       if(!name || !cityRaw) return fail('Add the landlord’s name and city.');
