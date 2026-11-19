@@ -55,6 +55,10 @@ create policy "add props"      on ll_props  for insert with check (true);
 create policy "read reviews"   on reviews   for select using (not hidden);
 create policy "add reviews"    on reviews   for insert with check (flags = 0 and hidden = false and reply is null);
 
+-- Public key may only read and add (never update or delete).
+grant usage on schema public to anon;
+grant select, insert on landlords, ll_props, reviews to anon;
+
 -- Reporting: 3 reports hides a review until you look at it.
 create or replace function flag_review(rid text) returns void
 language sql security definer set search_path = public as $$
