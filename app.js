@@ -61,9 +61,23 @@ function matchAll(qt, targets){
   }
   return s;
 }
+/* public-record registry: every residential parcel near campus (addresses.js) */
+const REG = (window.ADDRESSES || []).map(a => ({ a, slug: slug(a[0]+' '+a[1]), t: norm(a[0]+' '+a[1]) }));
+const REG_BY = new Map(REG.map(r => [r.slug, r]));
+const addrKey = s => norm(s).join(' ');
+const regHref = r => '#/addr/' + r.slug;
+function findReg(qt, known){
+  if(!REG.length || !qt.some(t => /^\d+$/.test(t))) return [];
+  const out = [];
+  for(const r of REG){
+    const s = matchAll(qt, r.t);
+    if(s && !known.has(addrKey(r.a[0]))) out.push({r, score: s + (r.t[0] === qt[0] ? 2 : 0)});
+  }
+  return out.sort((x, y) => y.score - x.score || x.r.a[0].localeCompare(y.r.a[0])).slice(0, 12);
+}
 function find(q){
   const qt = norm(q);
-  const out = {props:[], lls:[], qt};
+  const out = {props:[], lls:[], reg:[], qt};
   if(!qt.length) return out;
   allLandlords().forEach(l => {
     const nameT = norm(l.name), cityT = norm(l.city+' '+l.state);
@@ -77,6 +91,8 @@ function find(q){
   });
   out.props.sort((a,b) => b.score - a.score);
   out.lls.sort((a,b) => b.score - a.score);
+  const known = new Set(allLandlords().flatMap(l => l.properties.map(addrKey)));
+  out.reg = findReg(qt, known);
   return out;
 }
 function go(q){
@@ -86,6 +102,7 @@ function go(q){
   if(r.props.length && hasNum && (r.props.length === 1 || r.props[0].score > r.props[1].score)) { location.hash = propHref(r.props[0].l, r.props[0].p); return; }
   if(r.props.length === 1 && !r.lls.length){ location.hash = propHref(r.props[0].l, r.props[0].p); return; }
   if(!hasNum && r.lls.length === 1 && r.props.every(x => x.l.id === r.lls[0].l.id)){ location.hash = '#/landlord/' + r.lls[0].l.id; return; }
+  if(hasNum && !r.props.length && r.reg.length && (r.reg.length === 1 || r.reg[0].score > r.reg[1].score)){ location.hash = regHref(r.reg[0].r); return; }
   location.hash = '#/search?q=' + enc(q);
 }
 
@@ -111,8 +128,9 @@ function mountOmni(input){
     if(!q){ close(); return; }
     const r = find(q);
     items = r.props.slice(0,4).map(x => ({href: propHref(x.l, x.p), kind:'Address', title: x.p, sub: `${x.l.name} · ${x.l.city}, ${x.l.state}`, v: propStats(x.l, x.p).overall || stats(x.l).overall}))
+      .concat(r.reg.slice(0, Math.max(1, 6 - r.props.length)).map(x => ({href: regHref(x.r), kind:'Address', title: x.r.a[0], sub: `Los Angeles, CA ${x.r.a[1]} · ${x.r.a[4]} ${x.r.a[4]===1?'unit':'units'}${x.r.a[7] ? ' · open violations' : ''}`, v:0})))
       .concat(r.lls.slice(0,3).map(x => ({href:'#/landlord/'+x.l.id, kind:'Landlord', title:x.l.name, sub:`${x.l.type} · ${x.l.city}, ${x.l.state}`, v: stats(x.l).overall})));
-    if(!r.props.length && /\d/.test(q)) items.push({href:'#/rate?addr='+enc(q), kind:'New', title:`No ratings for “${q}” yet`, sub:'Be the first to rate this address', v:0, plus:true});
+    if(!r.props.length && !r.reg.length && /\d/.test(q)) items.push({href:'#/rate?addr='+enc(q), kind:'New', title:`No ratings for “${q}” yet`, sub:'Be the first to rate this address', v:0, plus:true});
     list.innerHTML = items.length ? items.map((it,i) => `<li role="option" id="${list.id}-${i}" data-i="${i}"><span class="omni-k">${it.kind}</span><span class="omni-t"><b>${esc(it.title)}</b><small>${esc(it.sub)}</small></span>${it.plus ? '<span class="omni-plus">+</span>' : tile(it.v,'sm')}</li>`).join('') : `<li class="omni-empty">No matches. Try a street address or a name.</li>`;
     list.hidden = false; input.setAttribute('aria-expanded','true'); active = -1;
   };
@@ -210,11 +228,12 @@ function search(q){
     list.sort((a,b) => state.sort==='low' ? a.s.overall-b.s.overall : state.sort==='most' ? b.s.n-a.s.n : b.s.overall-a.s.overall);
     body = `<div class="filters" role="group" aria-label="Sort">${[['high','Highest rated'],['low','Lowest rated'],['most','Most ratings']].map(([k,t]) => `<button class="chip" data-sort="${k}" aria-pressed="${state.sort===k}">${t}</button>`).join('')}</div>
       <div class="results">${list.map(x => llCard(x)).join('')}</div>`;
-  } else if(!r.props.length && !r.lls.length){
+  } else if(!r.props.length && !r.lls.length && !r.reg.length){
     const hasNum = /\d/.test(q);
     body = `<div class="empty rv"><h2>Nothing for “${esc(q)}” yet.</h2><p>${hasNum ? 'No one has rated this address. Be the first and warn the next tenant.' : 'Try a street address, a landlord’s name or a company.'}</p><a class="pill pill-blue" href="#/rate${hasNum ? '?addr='+enc(q) : ''}">${hasNum ? 'Rate this address' : 'Rate a landlord'}</a></div>`;
   } else {
     if(r.props.length) body += `<h2 class="sec">Addresses</h2><div class="results">${r.props.slice(0,12).map(propCard).join('')}</div>`;
+    if(r.reg.length) body += `<h2 class="sec">${r.props.length ? 'More addresses' : 'Addresses'}</h2><div class="results">${r.reg.map(x => `<a class="result rv" href="${regHref(x.r)}">${tile(0,'lg')}<div><h2>${esc(x.r.a[0])}</h2><p class="meta">Los Angeles, CA ${esc(x.r.a[1])} · ${x.r.a[4]} ${x.r.a[4]===1?'unit':'units'}${x.r.a[5] ? ' · built '+esc(x.r.a[5]) : ''}</p></div><div class="stat"><b>${x.r.a[6]}</b><span>Violation cases</span></div><div class="stat"><b>0</b><span>Ratings</span></div></a>`).join('')}</div>`;
     if(r.lls.length) body += `<h2 class="sec">Landlords</h2><div class="results">${r.lls.slice(0,8).map(llCard).join('')}</div>`;
   }
   return `
@@ -323,6 +342,42 @@ function landlord(id){
   </section>`;
 }
 
+function addrPage(sl){
+  const r = REG_BY.get(sl);
+  if(!r) return notFound();
+  const [addr, zip, lat, lon, units, built, cases, open] = r.a;
+  const rateHref = '#/rate?addr=' + enc(addr + ', Los Angeles, CA ' + zip);
+  const fact = (b, s) => `<div><b>${b}</b><span>${s}</span></div>`;
+  return `
+  <section class="page">
+    <div class="ll">
+      <div>
+        <p class="basedon rv">Public record · no tenant ratings yet</p>
+        <h1 class="rv" style="--i:1">${esc(addr)}</h1>
+        <p class="where rv" style="--i:2">Los Angeles, CA ${esc(zip)}</p>
+        <div class="stats rv" style="--i:3">
+          ${fact(units, units===1 ? 'Unit' : 'Units')}${fact(built || '–', 'Year built')}${fact(cases, 'Violation cases')}
+        </div>
+        <div class="actions rv" style="--i:4">
+          <a class="pill pill-blue" href="${rateHref}">Rate this address <span aria-hidden="true">→</span></a>
+          <a class="pill pill-out" href="https://www.google.com/maps/search/?api=1&query=${lat},${lon}" target="_blank" rel="noopener">Map</a>
+        </div>
+      </div>
+      <div>
+        <div class="panel rv">
+          <h2>What we know</h2>
+          <p class="meta" style="line-height:1.55">${cases ? `The city has opened <b>${cases}</b> housing code enforcement ${cases===1?'case':'cases'} on this property${open ? `, with <b>${open}</b> violation${open===1?'':'s'} still open` : ', all cleared'}.` : 'No city housing code enforcement cases on file for this property.'} Address, unit count and year built come from LA County Assessor records. Violations come from the LA Housing Department.</p>
+        </div>
+        <div class="panel panel-tint rv" style="--i:1">
+          <h2>Lived here?</h2>
+          <p class="meta" style="line-height:1.55">No one has rated this address yet. Tell the next tenant who the landlord is and what it was like.</p>
+          <a class="pill pill-blue pill-sm" href="${rateHref}">Write a review</a>
+        </div>
+      </div>
+    </div>
+  </section>`;
+}
+
 function rate(id, params){
   const lls = allLandlords();
   const l = id ? getLL(id) : null;
@@ -409,6 +464,7 @@ function route(){
   if(!parts.length){ html = home(); after = bindHome; document.title = 'Landlog – Type the address. Know the landlord.'; }
   else if(parts[0]==='search'){ const q = params.get('q'); html = search(q); after = () => bindSearch(q); document.title = (q ? q+' – ' : '') + 'Search – Landlog'; }
   else if(parts[0]==='landlord'){ state.prop = params.get('p') || 'all'; state.rsort = 'new'; html = landlord(parts[1]); after = () => bindLandlord(parts[1]); const l = getLL(parts[1]); document.title = (l ? l.name : 'Not found') + ' – Landlog'; }
+  else if(parts[0]==='addr'){ html = addrPage(parts[1]); const r = REG_BY.get(parts[1]); document.title = (r ? r.a[0] : 'Not found') + ' – Landlog'; }
   else if(parts[0]==='rate'){ html = rate(parts[1], params); after = bindRate; document.title = 'Rate a landlord – Landlog'; }
   else if(parts[0]==='guidelines'){ html = guidelines(); document.title = 'Review guidelines – Landlog'; }
   else { html = notFound(); }
