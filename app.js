@@ -346,7 +346,9 @@ function addrPage(sl){
   const r = REG_BY.get(sl);
   if(!r) return notFound();
   const [addr, zip, lat, lon, units, built, cases, open] = r.a;
-  const rateHref = '#/rate?addr=' + enc(addr + ', Los Angeles, CA ' + zip);
+  const rateHref = '#/rate?addr=' + enc(addr);
+  const owner = allLandlords().find(l => l.properties.some(p => addrKey(p) === addrKey(addr)));
+  if(owner){ const p = owner.properties.find(p => addrKey(p) === addrKey(addr)); location.replace(propHref(owner, p)); return ''; }
   const fact = (b, s) => `<div><b>${b}</b><span>${s}</span></div>`;
   return `
   <section class="page">
@@ -370,7 +372,7 @@ function addrPage(sl){
         </div>
         <div class="panel panel-tint rv" style="--i:1">
           <h2>Lived here?</h2>
-          <p class="meta" style="line-height:1.55">No one has rated this address yet. Tell the next tenant who the landlord is and what it was like.</p>
+          <p class="meta" style="line-height:1.55">No one has rated this address yet, so the landlord is unknown. Know who owns or manages it? Add the name with your review and it shows up for the next tenant.</p>
           <a class="pill pill-blue pill-sm" href="${rateHref}">Write a review</a>
         </div>
       </div>
@@ -408,7 +410,7 @@ function rate(id, params){
         </div>
         <div class="two hidden" id="newLL">
           <div><label for="newName">Landlord or company name</label><input class="in" id="newName" maxlength="80"></div>
-          <div><label for="newCity">City, state</label><input class="in" id="newCity" maxlength="60" placeholder="Los Angeles, CA"></div>
+          <div><label for="newCity">City, state</label><input class="in" id="newCity" maxlength="60" placeholder="Los Angeles, CA" value="${REG_BY.size && /^\d/.test(addr) ? 'Los Angeles, CA' : ''}"></div>
         </div>
         <div>
           <label for="year">Year you lived there</label>
