@@ -1,0 +1,22 @@
+name: Weekly backup of public data
+on:
+  schedule:
+    - cron: '0 11 * * 0'   # Sundays
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: node tools/backup.mjs
+      - name: Keep the 12 newest snapshots and commit
+        run: |
+          ls -1 backups/*.json 2>/dev/null | head -n -12 | xargs -r rm
+          git config user.name "Landlog backup bot"
+          git config user.email "landlog@users.noreply.github.com"
+          git add backups
+          git diff --cached --quiet && echo "No changes" || (git commit -m "Weekly backup" && git push)

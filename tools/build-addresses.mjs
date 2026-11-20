@@ -12,6 +12,7 @@ const ZIPS = ['90007', '90089', '90037', '90011', '90018', '90062', '90006', '90
 
 const PARCELS = 'https://public.gis.lacounty.gov/public/rest/services/LACounty_Cache/LACounty_Parcel/MapServer/0/query';
 const LAHD = 'https://data.lacity.org/resource/cr8f-uc4j.json';
+const EVICT = 'https://data.lacity.org/resource/2u8b-eyuu.json';
 
 const miles = (lat, lon) => {
   const R = 3958.8, r = Math.PI / 180;
@@ -46,7 +47,7 @@ for (const zip of ZIPS) {
       const street = [a.SitusDirection, a.SitusStreet].filter(Boolean).join(' ').trim();
       const addr = title(`${num} ${street}`.replace(/\s+/g, ' '));
       parcels.set(a.AIN, [addr, a.SitusZIP.slice(0, 5), +a.CENTER_LAT.toFixed(5), +a.CENTER_LON.toFixed(5),
-        a.Units1 || 1, a.YearBuilt1 || '', 0, 0]);
+        a.Units1 || 1, a.YearBuilt1 || '', 0, 0, [], 0]);
     }
     process.stderr.write(`parcels ${zip} +${off + f.length}  kept ${parcels.size}\n`);
     if (f.length < 1000 && !d.exceededTransferLimit) break;
@@ -56,21 +57,36 @@ for (const zip of ZIPS) {
 // Housing-violation cases per parcel (LAHD Systematic Code Enforcement).
 const cases = new Map(); // ain -> Set(case ids)
 const open = new Map();  // ain -> count of open violations
+const types = new Map(); // ain -> Map(type -> count)
 for (let off = 0; ; off += 50000) {
-  const rows = await getJSON(`${LAHD}?$select=apn,criscase,violations_cleared&$limit=50000&$offset=${off}&$order=apn`);
+  const rows = await getJSON(`${LAHD}?$select=apn,criscase,violations_cleared,violationtype&$limit=50000&$offset=${off}&$order=apn`);
   for (const r of rows) {
     if (!parcels.has(r.apn)) continue;
     (cases.get(r.apn) || cases.set(r.apn, new Set()).get(r.apn)).add(r.criscase);
     if (r.violations_cleared === '0') open.set(r.apn, (open.get(r.apn) || 0) + 1);
+    if (r.violationtype) { const m = types.get(r.apn) || types.set(r.apn, new Map()).get(r.apn); m.set(r.violationtype, (m.get(r.violationtype) || 0) + 1); }
   }
   process.stderr.write(`lahd +${off + rows.length}\n`);
   if (rows.length < 50000) break;
 }
-for (const [ain, p] of parcels) { p[6] = cases.get(ain)?.size || 0; p[7] = open.get(ain) || 0; }
+// Eviction notices filed with LAHD in the last 3 years, per parcel.
+const since = new Date(Date.now() - 3 * 365 * 864e5).toISOString().slice(0, 10);
+const evict = new Map();
+for (let off = 0; ; off += 50000) {
+  const rows = await getJSON(`${EVICT}?$select=apn,count(*) as n&$where=notice_date>'${since}'&$group=apn&$limit=50000&$offset=${off}`);
+  for (const r of rows) if (parcels.has(r.apn)) evict.set(r.apn, +r.n);
+  process.stderr.write(`evictions +${off + rows.length}\n`);
+  if (rows.length < 50000) break;
+}
+for (const [ain, p] of parcels) {
+  p[6] = cases.get(ain)?.size || 0; p[7] = open.get(ain) || 0;
+  p[8] = [...(types.get(ain) || [])].sort((a, b) => b[1] - a[1]).slice(0, 3).map(e => e[0]);
+  p[9] = evict.get(ain) || 0;
+}
 
 const rows = [...parcels.values()].sort((a, b) => a[0].localeCompare(b[0]));
 const js = `// Public-record parcels near USC (LA County Assessor GIS) + LAHD violation counts. Generated ${new Date().toISOString().slice(0, 10)}.
-// [address, zip, lat, lon, units, yearBuilt, violationCases, openViolations]
+// [address, zip, lat, lon, units, yearBuilt, violationCases, openViolations, topViolationTypes[], evictionNotices3yr]
 window.ADDRESSES=${JSON.stringify(rows)};\n`;
 writeFileSync(OUT, js);
-console.log(`wrote ${rows.length} addresses, ${[...cases.keys()].length} with violation cases, ${(js.length / 1e6).toFixed(2)} MB`);
+console.log(`wrote ${rows.length} addresses, ${[...cases.keys()].length} with violation cases, ${evict.size} with eviction notices, ${(js.length / 1e6).toFixed(2)} MB`);

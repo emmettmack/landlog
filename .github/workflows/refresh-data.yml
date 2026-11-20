@@ -1,0 +1,22 @@
+name: Refresh public-record data
+on:
+  schedule:
+    - cron: '0 10 1 * *'   # 1st of each month
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Rebuild addresses.js from LA County and LAHD open data
+        run: node tools/build-addresses.mjs
+      - name: Commit if changed
+        run: |
+          git config user.name "Landlog data bot"
+          git config user.email "landlog@users.noreply.github.com"
+          git add addresses.js
+          git diff --cached --quiet && echo "No changes" || (git commit -m "Refresh public-record data" && git push)
