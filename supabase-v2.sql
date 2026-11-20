@@ -98,7 +98,8 @@ create table if not exists reports (
   review_id text not null, device text not null, ip_hash text, created_at timestamptz not null default now(),
   primary key (review_id, device)
 );
-create unique index if not exists reports_ip on reports (review_id, ip_hash) where ip_hash is not null;
+drop index if exists reports_ip;
+create index if not exists reports_ip2 on reports (review_id, ip_hash);
 create table if not exists votes (
   review_id text not null, voter text not null, created_at timestamptz not null default now(),
   primary key (review_id, voter)
@@ -115,6 +116,8 @@ begin
   iph := case when ip = '' then null else md5(ip || 'landlog') end;
   d := coalesce(auth.uid()::text, nullif(dev, ''), iph);
   if d is null then return; end if;
+  -- at most 2 reports per network per review, so shared campus Wi-Fi can't hide a review alone
+  if iph is not null and (select count(*) from reports where review_id = rid and ip_hash = iph) >= 2 then return; end if;
   insert into reports (review_id, device, ip_hash) values (rid, d, iph) on conflict do nothing;
   select count(*) into n from reports where review_id = rid;
   update reviews set flags = n, hidden = (n >= 3) where id = rid;

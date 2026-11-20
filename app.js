@@ -217,7 +217,7 @@ function loadRegistry(){
   if(regLoading) return regLoading;
   regLoading = new Promise(res => {
     if(window.ADDRESSES){ buildReg(); return res(); }
-    const s = document.createElement('script'); s.src = 'addresses.js?v=2';
+    const s = document.createElement('script'); s.src = 'addresses.js?v=202611191910';
     s.onload = () => { buildReg(); res(); }; s.onerror = () => res();
     document.head.appendChild(s);
   }).then(() => { if(REG_READY && /^#\/(search|addr|map|saved|$)/.test(location.hash || '#/') && !/^#\/rate/.test(location.hash)) route(); });
@@ -260,7 +260,7 @@ function splitUnit(q){
   return m ? {q: q.replace(m[0], ' ').replace(/\s+/g, ' ').trim(), unit: m[1].toUpperCase()} : {q: String(q).trim(), unit: ''};
 }
 function findReg(qt, known, fuzzy, limit){
-  if(!REG_READY || !qt.some(t => /^\d+$/.test(t))) return [];
+  if(!REG_READY || !(qt.some(t => /^\d+$/.test(t)) || qt.join('').length >= 5)) return [];
   const out = [];
   for(const r of REG){
     const s = matchAll(qt, r.t, fuzzy);
